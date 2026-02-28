@@ -14,7 +14,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-const contas = { 
+const contas = {
   BRP1: { email: "conta1@email.com", senha: "123456" },
   BRP2: { email: "conta2@email.com", senha: "123456" },
   BRP3: { email: "conta3@email.com", senha: "123456" },
