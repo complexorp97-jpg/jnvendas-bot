@@ -9,9 +9,11 @@ app.use(express.json());
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "SEUEMAIL@gmail.com",
-    pass: "SENHA_DE_APP"
-  }
+    auth: {
+  user: process.env.EMAIL_USER,
+  pass: process.env.EMAIL_PASS
+}
+    
 });
 
 const contas = {
@@ -49,6 +51,12 @@ app.post("/pagamento-aprovado", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Servidor rodando na porta 3000");
+app.get("/", (req, res) => {
+  res.send("API online 🚀");
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("Servidor rodando na porta " + PORT);
 });
