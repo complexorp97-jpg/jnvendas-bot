@@ -1,1 +1,219 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JN VENDAS • Painel ADM</title>
+  <style>
+    :root{--neon:#b56bff;--neon2:#ff4dff;--txt:#fff}
+    body{margin:0;font-family:Arial;background:linear-gradient(180deg,#12001f,#22003a,#3a0075);color:var(--txt)}
+    .wrap{max-width:980px;margin:0 auto;padding:18px}
+    .card{background:rgba(0,0,0,.25);border:1px solid rgba(181,107,255,.35);border-radius:18px;padding:14px;backdrop-filter:blur(8px)}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .btn{cursor:pointer;border-radius:12px;border:1px solid rgba(181,107,255,.55);background:rgba(255,255,255,.08);color:#fff;font-weight:900;padding:10px 12px}
+    .btnNeon{box-shadow:0 0 12px rgba(181,107,255,.75),0 0 26px rgba(255,77,255,.25)}
+    .inp, select{width:100%;height:42px;border-radius:12px;border:1px solid rgba(181,107,255,.45);background:rgba(255,255,255,.08);color:#fff;padding:0 12px;outline:none;font-weight:900}
+    label{font-size:12px;opacity:.85;font-weight:900}
+    h1{margin:0 0 8px;text-shadow:0 0 14px rgba(181,107,255,.7)}
+    .muted{opacity:.8;font-size:13px}
+    .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+    @media(max-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
+    .box{border:1px solid rgba(181,107,255,.30);background:rgba(255,255,255,.06);border-radius:14px;padding:10px}
+    .kpi{font-size:20px;font-weight:1000;color:var(--neon);text-shadow:0 0 10px rgba(181,107,255,.8)}
+    .ok{color:#86ffb0;font-weight:900}
+    .err{color:#ff7f7f;font-weight:900}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    .pill{padding:6px 10px;border:1px solid rgba(181,107,255,.35);border-radius:999px;background:rgba(255,255,255,.06);font-weight:900}
+    .hide{display:none}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>🔑 Painel ADM — JN VENDAS</h1>
+        <div class="muted">Gerencie estoque (BRP1…BRP5) e veja entregas.</div>
+      </div>
+      <div class="pill" id="statusPill">Deslogado</div>
+    </div>
+
+    <div style="height:12px"></div>
+
+    <div class="card" id="loginCard">
+      <h2 style="margin:0 0 10px">Entrar</h2>
+      <div class="row">
+        <div style="flex:1;min-width:240px">
+          <label>Senha do Admin (ADMIN_PASSWORD)</label>
+          <input class="inp" id="admPass" type="password" placeholder="Digite a senha do painel" />
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btnNeon" onclick="login()">Entrar</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        Dica: a senha é configurada no Render em <b>Environment → ADMIN_PASSWORD</b>.
+      </div>
+      <div id="loginMsg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card hide" id="panelCard">
+      <div class="top">
+        <h2 style="margin:0">📦 Estoque</h2>
+        <div class="row">
+          <button class="btn" onclick="refreshAll()">Atualizar</button>
+          <button class="btn" onclick="logout()">Sair</button>
+        </div>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <div class="grid" id="kpis"></div>
+
+      <div style="height:14px"></div>
+
+      <div class="row">
+        <div style="flex:1;min-width:220px">
+          <label>Produto</label>
+          <select class="inp" id="productId">
+            <option value="BRP1">BRP1</option>
+            <option value="BRP2">BRP2</option>
+            <option value="BRP3">BRP3</option>
+            <option value="BRP4">BRP4</option>
+            <option value="BRP5">BRP5</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:240px">
+          <label>Login da conta</label>
+          <input class="inp" id="accLogin" placeholder="ex: email@conta.com" />
+        </div>
+        <div style="flex:1;min-width:200px">
+          <label>Senha da conta</label>
+          <input class="inp" id="accPass" placeholder="senha" />
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btnNeon" onclick="addStock()">+ Adicionar</button>
+        </div>
+      </div>
+
+      <div id="panelMsg" style="margin-top:12px"></div>
+
+      <div style="height:16px"></div>
+
+      <div class="box">
+        <div class="top">
+          <h3 style="margin:0">📨 Entregas / Compras (últimas)</h3>
+          <button class="btn" onclick="loadDeliveries()">Ver</button>
+        </div>
+        <div class="muted">Mostra compras registradas no servidor (MongoDB).</div>
+        <pre id="deliveries" style="white-space:pre-wrap;word-break:break-word;margin:10px 0 0;opacity:.95"></pre>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const KEY = "JN_ADMIN_KEY";
+
+  function setStatus(text){ document.getElementById("statusPill").textContent = text; }
+  function getAdminKey(){ return localStorage.getItem(KEY) || ""; }
+  function setAdminKey(v){ localStorage.setItem(KEY, v); }
+  function clearAdminKey(){ localStorage.removeItem(KEY); }
+
+  async function api(path, opts={}){
+    const key = getAdminKey();
+    const headers = Object.assign({ "Content-Type": "application/json" }, (opts.headers||{}));
+    headers["x-admin-key"] = key;
+    const res = await fetch(path, { ...opts, headers });
+    const text = await res.text();
+    let data = null;
+    try{ data = JSON.parse(text); }catch{ data = { raw:text }; }
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  function showLogin(msg="", ok=true){
+    document.getElementById("loginCard").classList.remove("hide");
+    document.getElementById("panelCard").classList.add("hide");
+    setStatus("Deslogado");
+    document.getElementById("loginMsg").innerHTML = msg ? `<span class="${ok?'ok':'err'}">${msg}</span>` : "";
+  }
+  function showPanel(){
+    document.getElementById("loginCard").classList.add("hide");
+    document.getElementById("panelCard").classList.remove("hide");
+    setStatus("Logado ✅");
+  }
+
+  async function login(){
+    const pass = document.getElementById("admPass").value.trim();
+    if(!pass) return showLogin("Digite a senha.", false);
+
+    setAdminKey(pass);
+    const r = await api("/api/admin/stock");
+    if(!r.ok){
+      clearAdminKey();
+      return showLogin("Senha inválida ou painel não configurado.", false);
+    }
+    showPanel();
+    await refreshAll();
+  }
+
+  function logout(){
+    clearAdminKey();
+    showLogin("Saiu do painel.", true);
+  }
+
+  async function refreshAll(){
+    await loadStock();
+    document.getElementById("panelMsg").innerHTML = "";
+  }
+
+  async function loadStock(){
+    const r = await api("/api/admin/stock");
+    if(!r.ok){
+      return document.getElementById("panelMsg").innerHTML = `<span class="err">Erro ao carregar estoque (status ${r.status}).</span>`;
+    }
+    const resumo = r.data.resumo || {};
+    const ids = ["BRP1","BRP2","BRP3","BRP4","BRP5"];
+    document.getElementById("kpis").innerHTML = ids.map(id => `
+      <div class="box">
+        <div style="font-weight:1000">${id}</div>
+        <div class="kpi">${resumo[id] ?? 0}</div>
+        <div class="muted">em estoque</div>
+      </div>
+    `).join("");
+  }
+
+  async function addStock(){
+    const productId = document.getElementById("productId").value;
+    const login = document.getElementById("accLogin").value.trim();
+    const senha = document.getElementById("accPass").value.trim();
+    if(!login || !senha){
+      return document.getElementById("panelMsg").innerHTML = `<span class="err">Preencha login e senha.</span>`;
+    }
+    const r = await api("/api/admin/stock/add", { method:"POST", body: JSON.stringify({ productId, login, senha }) });
+    if(!r.ok){
+      return document.getElementById("panelMsg").innerHTML = `<span class="err">Erro ao adicionar (status ${r.status}): ${(r.data.error || r.data.raw || "")}</span>`;
+    }
+    document.getElementById("accLogin").value = "";
+    document.getElementById("accPass").value = "";
+    document.getElementById("panelMsg").innerHTML = `<span class="ok">Adicionado ✅ Total em ${productId}: ${r.data.total}</span>`;
+    await loadStock();
+  }
+
+  async function loadDeliveries(){
+    const r = await api("/api/admin/deliveries");
+    const el = document.getElementById("deliveries");
+    if(!r.ok){ el.textContent = `Erro ao carregar entregas (status ${r.status}).`; return; }
+    el.textContent = JSON.stringify(r.data, null, 2);
+  }
+
+  (async function init(){
+    if(getAdminKey()){
+      const r = await api("/api/admin/stock");
+      if(r.ok){ showPanel(); await refreshAll(); return; }
+      clearAdminKey();
+    }
+    showLogin();
+  })();
+</script>
+</body>
+  </html>
 
