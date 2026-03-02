@@ -1,72 +1,60 @@
-import express from "express";
-import cors from "cors";
-import nodemailer from "nodemailer";
-import crypto from "crypto";
-
-const app = express();
-app.use(express.json());
-app.use(cors({ origin: "*" }));
-
-// ================= CONFIG =================
-const SITE_BASE = process.env.SITE_BASE || "https://complexorp97-jpg.github.io/jnvendas-site/";
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
-
-// ================= EMAIL =================
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: { user: EMAIL_USER, pass: EMAIL_PASS }
-});
-
-// ================= BANCO SIMPLES =================
-const db = {
-  tokens: new Map(), // token -> { email, purchases:[{productId, code}] }
-};
-
-// ================= GERAR CÓDIGO =================
-function gerarCodigo(produto) {
-  const random = crypto.randomBytes(4).toString("hex").toUpperCase();
-  return `${produto}-${random}`;
-}
-
-// ================= CRIAR TOKEN =================
-function novoToken() {
-  return crypto.randomBytes(24).toString("hex");
-}
-
-// ================= HEALTH =================
-app.get("/", (req, res) => {
-  res.send("API online 🚀");
-});
-
-// =======================================================
-// 🔹 WEBHOOK MERCADO PAGO
-// Configure no MP:
-// https://SEUBOT.onrender.com/api/mp/webhook
-// =======================================================
 app.post("/api/mp/webhook", async (req, res) => {
   try {
-    const { status, buyerEmail, productId } = req.body;
+    // MP pode mandar por body ou por query
+    const paymentId =
+      req.body?.data?.id ||
+      req.query?.data_id ||
+      req.query?.id;
 
-    if (status !== "approved") {
-      return res.json({ ok: true });
+    if (!paymentId) return res.status(200).json({ ok: true });
+
+    const MP_TOKEN = process.env.MP_ACCESS_TOKEN;
+    if (!MP_TOKEN) return res.status(500).json({ error: "MP_ACCESS_TOKEN não configurado" });
+
+    // Busca o pagamento real no Mercado Pago
+    const resp = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+      headers: { Authorization: `Bearer ${MP_TOKEN}` }
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.log("MP fetch erro:", resp.status, txt);
+      return res.status(200).json({ ok: true });
     }
 
-    if (!buyerEmail || !productId) {
-      return res.status(400).json({ error: "Dados inválidos" });
-    }
+    const payment = await resp.json();
+
+    // Só libera quando aprovado
+    if (payment.status !== "approved") return res.status(200).json({ ok: true });
+
+    // Email do comprador
+    const buyerEmail = payment.payer?.email;
+    if (!buyerEmail) return res.status(200).json({ ok: true });
+
+    // 🔥 Como pegar o productId?
+    // Você precisa colocar um identificador no pagamento quando criar a preferência.
+    // Aqui vamos tentar achar:
+    let productId =
+      payment.metadata?.productId ||
+      payment.additional_info?.items?.[0]?.id ||
+      payment.additional_info?.items?.[0]?.title;
+
+    if (!productId) productId = "PRODUTO";
+
+    // Evita duplicar se o MP mandar o mesmo evento mais de uma vez
+    const already = db.tokens.get(String(paymentId));
+    if (already) return res.status(200).json({ ok: true });
 
     const token = novoToken();
     const code = gerarCodigo(productId);
 
+    // Guarda pelo paymentId como chave (anti-duplicação)
+    db.tokens.set(String(paymentId), { paid: true, createdAt: new Date() });
+
+    // Guarda o token de entrega
     db.tokens.set(token, {
       email: buyerEmail,
-      purchases: [
-        {
-          productId,
-          code
-        }
-      ],
+      purchases: [{ productId, code }],
       createdAt: new Date()
     });
 
@@ -84,83 +72,9 @@ app.post("/api/mp/webhook", async (req, res) => {
       `
     });
 
-    res.json({ ok: true });
+    return res.status(200).json({ ok: true });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Erro no webhook" });
+    return res.status(200).json({ ok: true }); // sempre 200 pro MP não ficar reenviando
   }
-});
-
-// =======================================================
-// 🔹 CONSULTAR COMPRAS
-// =======================================================
-app.get("/api/purchases", (req, res) => {
-  const token = req.query.token;
-
-  if (!token) {
-    return res.status(400).json({ error: "Token obrigatório" });
-  }
-
-  const data = db.tokens.get(token);
-
-  if (!data) {
-    return res.status(404).json({ error: "Token inválido" });
-  }
-
-  res.json({
-    email: data.email,
-    purchases: data.purchases
-  });
-});
-
-// =======================================================
-// 🔹 ROTA DE TESTE (SEM MERCADO PAGO)
-// =======================================================
-app.post("/api/test/approve", async (req, res) => {
-  try {
-    const { buyerEmail, productId } = req.body;
-
-    if (!buyerEmail || !productId) {
-      return res.status(400).json({ error: "Dados inválidos" });
-    }
-
-    const token = novoToken();
-    const code = gerarCodigo(productId);
-
-    db.tokens.set(token, {
-      email: buyerEmail,
-      purchases: [
-        {
-          productId,
-          code
-        }
-      ],
-      createdAt: new Date()
-    });
-
-    const deliveryLink = SITE_BASE + "entrega.html?token=" + token;
-
-    await transporter.sendMail({
-      from: "JN VENDAS",
-      to: buyerEmail,
-      subject: "✅ TESTE - Código liberado",
-      html: `
-        <h2>Teste de entrega ✅</h2>
-        <p>Link:</p>
-        <p><a href="${deliveryLink}">${deliveryLink}</a></p>
-      `
-    });
-
-    res.json({ ok: true, deliveryLink });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erro no teste" });
-  }
-});
-
-// =======================================================
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Servidor rodando na porta " + PORT);
 });
